@@ -3,298 +3,203 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>rewind — deterministic record/replay debugging for LLM agents</title>
-<meta name="description" content="Record an agent run once; replay it byte-exact, offline, free, forever. Fork any step to compute the future that would have happened. rr for agents.">
+<title>rewind — record/replay debugger for LLM agents</title>
+<meta name="description" content="Record an agent run once. Replay it byte-exact, offline, $0. Fork any step.">
 <meta property="og:title" content="rewind — rr for agents">
-<meta property="og:description" content="Deterministic record/replay debugging for LLM agents. Replay crashed runs offline at $0. Fork any step to compute counterfactual futures.">
-<meta property="og:type" content="website">
+<meta property="og:description" content="Record an agent run once. Replay it byte-exact, offline, $0. Fork any step.">
+<link rel="preload" href="https://api.fontshare.com/v2/css?f[]=clash-display@500,600,700&display=swap" as="style">
+<link rel="stylesheet" href="https://api.fontshare.com/v2/css?f[]=clash-display@500,600,700&display=swap">
 <style>
   :root {
-    --bg: #0a0c10;
-    --bg-raise: #11141b;
-    --border: #1e2430;
-    --text: #d6dbe4;
-    --dim: #8b93a3;
-    --faint: #5a6272;
-    --green: #4ade80;
-    --amber: #fbbf24;
-    --red: #f87171;
-    --cyan: #67e8f9;
-    --mono: "SF Mono", ui-monospace, "Cascadia Code", "JetBrains Mono", Menlo, Consolas, monospace;
+    --accent: #ff2390;
+    --mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
+    --display: "Clash Display", var(--mono);
   }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html { scroll-behavior: smooth; }
   body {
-    background: var(--bg);
-    color: var(--text);
+    background: #000;
+    color: #fffffff2;
     font-family: var(--mono);
     line-height: 1.6;
     -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
   }
-  a { color: var(--cyan); text-decoration: none; }
-  a:hover { text-decoration: underline; }
-  .wrap { max-width: 940px; margin: 0 auto; padding: 0 24px; }
+  a { color: inherit; text-decoration: none; }
+
+  /* background */
+  #bg { position: fixed; inset: 0; z-index: 0; width: 100%; height: 100%; display: block; }
+  .vignette {
+    position: fixed; inset: 0; z-index: 1; pointer-events: none;
+    background: radial-gradient(1200px 700px at 50% 15%, transparent 25%, rgba(0,0,0,.72) 85%);
+  }
+  .scanlines {
+    position: fixed; inset: 0; z-index: 1; pointer-events: none; opacity: .5;
+    background: repeating-linear-gradient(0deg, transparent 0 2px, rgba(0,0,0,.25) 2px 4px);
+  }
+
+  .wrap { position: relative; z-index: 2; max-width: 1060px; margin: 0 auto; padding: 0 24px; }
 
   /* nav */
-  nav {
-    display: flex; justify-content: space-between; align-items: center;
-    padding: 20px 0;
+  nav { display: flex; justify-content: space-between; align-items: center; padding: 28px 0; }
+  .logo { display: flex; align-items: baseline; gap: 12px; }
+  .logo b { font-family: var(--display); font-size: 20px; font-weight: 600; letter-spacing: .5px; }
+  .logo b span { color: var(--accent); }
+  .logo em { font-style: normal; font-size: 12px; color: #ffffff8c; }
+  .gh {
+    font-size: 13px; padding: 8px 18px; border: 1px solid #ffffff26; border-radius: 999px;
+    background: #ffffff0d; backdrop-filter: blur(6px); transition: border-color .15s;
   }
-  nav .logo { font-weight: 700; font-size: 18px; color: var(--text); }
-  nav .logo span { color: var(--green); }
-  nav .links a { color: var(--dim); margin-left: 24px; font-size: 14px; }
-  nav .links a:hover { color: var(--text); text-decoration: none; }
+  .gh:hover { border-color: #ffffff8c; }
 
   /* hero */
-  header { padding: 72px 0 40px; }
-  .kicker {
-    color: var(--green); font-size: 13px; letter-spacing: 2px;
-    text-transform: uppercase; margin-bottom: 16px;
-  }
+  header { padding: 96px 0 56px; text-align: center; }
   h1 {
-    font-size: clamp(28px, 5vw, 44px); line-height: 1.2; font-weight: 700;
-    max-width: 760px;
+    font-family: var(--display); font-weight: 600;
+    font-size: clamp(38px, 7vw, 72px); line-height: 1.02; letter-spacing: -.5px;
+    max-width: 820px; margin: 0 auto;
+    text-shadow: 0 2px 24px rgba(0,0,0,.55);
   }
-  h1 em { font-style: normal; color: var(--green); }
-  .sub {
-    color: var(--dim); font-size: clamp(15px, 2.2vw, 18px);
-    margin-top: 18px; max-width: 680px;
-  }
-  .sub strong { color: var(--text); font-weight: 600; }
-  .cta { margin-top: 32px; display: flex; gap: 14px; flex-wrap: wrap; }
+  h1 span { color: var(--accent); }
+  .sub { color: #ffffffd9; font-size: clamp(14px, 2vw, 16px); margin: 24px auto 0; max-width: 560px; text-shadow: 0 1px 12px rgba(0,0,0,.7); }
+  .cta { margin-top: 36px; display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
   .btn {
-    display: inline-block; padding: 11px 22px; border-radius: 6px;
-    font-size: 14px; font-weight: 600; border: 1px solid var(--border);
-    transition: all .15s ease;
+    font-size: 14px; font-weight: 600; padding: 12px 26px; border-radius: 999px;
+    border: 1px solid var(--accent); transition: filter .15s;
   }
-  .btn-primary { background: var(--green); color: #06110a; border-color: var(--green); }
-  .btn-primary:hover { filter: brightness(1.1); text-decoration: none; }
-  .btn-ghost { color: var(--text); background: var(--bg-raise); }
-  .btn-ghost:hover { border-color: var(--faint); text-decoration: none; }
+  .btn-solid { background: var(--accent); color: #14020b; }
+  .btn-solid:hover { filter: brightness(1.15); }
+  .btn-line { color: #fff; background: #00000066; backdrop-filter: blur(6px); border-color: #ffffff26; }
+  .btn-line:hover { border-color: #ffffff8c; }
+
+  /* stats */
+  .stats {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 12px; margin: 8px 0 72px;
+  }
+  .stat {
+    text-align: center; padding: 20px 12px; border: 1px solid #ffffff1a; border-radius: 12px;
+    background: #000000a6; backdrop-filter: blur(8px);
+  }
+  .stat b { font-family: var(--display); font-size: 26px; font-weight: 600; display: block; }
+  .stat b i { font-style: normal; color: var(--accent); }
+  .stat span { font-size: 12px; color: #ffffff8c; }
 
   /* terminal */
   .term {
-    margin: 56px 0 0; background: #0d1017; border: 1px solid var(--border);
-    border-radius: 10px; overflow: hidden;
-    box-shadow: 0 24px 60px -24px rgba(0,0,0,.7);
+    border: 1px solid #ffffff1a; border-radius: 12px; overflow: hidden;
+    background: #000000d9; backdrop-filter: blur(8px); margin-bottom: 72px;
   }
   .term-bar {
-    display: flex; align-items: center; gap: 8px;
-    padding: 12px 16px; background: var(--bg-raise);
-    border-bottom: 1px solid var(--border);
+    display: flex; gap: 7px; padding: 13px 16px; border-bottom: 1px solid #ffffff1a;
+    align-items: center;
   }
-  .dot { width: 12px; height: 12px; border-radius: 50%; }
-  .dot:nth-child(1) { background: #ff5f57; }
-  .dot:nth-child(2) { background: #febc2e; }
-  .dot:nth-child(3) { background: #28c840; }
-  .term-title { margin-left: 8px; color: var(--faint); font-size: 12px; }
-  .term-body {
-    padding: 20px; font-size: 13.5px; line-height: 1.75;
-    min-height: 420px; white-space: pre-wrap; word-break: break-word;
-  }
-  .term-body .p { color: var(--cyan); }
-  .term-body .c { color: var(--faint); }
-  .term-body .ok { color: var(--green); }
-  .term-body .err { color: var(--red); }
-  .term-body .warn { color: var(--amber); }
-  .term-body .dim { color: var(--dim); }
-  .cursor {
-    display: inline-block; width: 8px; height: 16px;
-    background: var(--green); vertical-align: text-bottom;
-    animation: blink 1s steps(1) infinite;
-  }
-  @keyframes blink { 50% { opacity: 0; } }
+  .dot { width: 11px; height: 11px; border-radius: 50%; background: #ffffff26; }
+  .term-bar span { margin-left: 6px; font-size: 12px; color: #ffffff8c; }
+  .term-body { padding: 20px; font-size: 13.5px; line-height: 1.9; overflow-x: auto; white-space: pre; }
+  .p { color: #fff; } .p::before { content: "$ "; color: var(--accent); }
+  .c { color: #ffffff59; }
+  .ok { color: #4ade80; }
+  .err { color: #f87171; }
+  .pink { color: var(--accent); }
 
-  /* sections */
-  section { padding: 72px 0 0; }
-  h2 {
-    font-size: 24px; margin-bottom: 8px;
-  }
-  h2::before { content: "# "; color: var(--faint); }
-  .lede { color: var(--dim); margin-bottom: 32px; max-width: 680px; }
-
-  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }
+  /* features */
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; margin-bottom: 72px; }
   .card {
-    background: var(--bg-raise); border: 1px solid var(--border);
-    border-radius: 8px; padding: 22px;
+    border: 1px solid #ffffff1a; border-radius: 12px; padding: 20px;
+    background: #000000a6; backdrop-filter: blur(8px);
   }
-  .card h3 { font-size: 15px; margin-bottom: 10px; color: var(--green); }
-  .card p { font-size: 13.5px; color: var(--dim); }
-  .card p code { color: var(--text); }
+  .card h3 { font-family: var(--display); font-size: 16px; font-weight: 600; margin-bottom: 8px; }
+  .card h3::before { content: "▸ "; color: var(--accent); }
+  .card p { font-size: 13px; color: #ffffffb3; }
 
+  /* quick start */
+  h2 { font-family: var(--display); font-size: 26px; font-weight: 600; margin-bottom: 20px; }
   pre.code {
-    background: #0d1017; border: 1px solid var(--border); border-radius: 8px;
-    padding: 20px; font-size: 13.5px; overflow-x: auto; line-height: 1.7;
+    border: 1px solid #ffffff1a; border-radius: 12px; padding: 20px;
+    background: #000000d9; backdrop-filter: blur(8px);
+    font-size: 13.5px; line-height: 1.8; overflow-x: auto; margin-bottom: 12px;
   }
-  pre.code .c { color: var(--faint); }
-  pre.code .k { color: var(--cyan); }
-  pre.code .s { color: var(--green); }
-  code { font-family: var(--mono); }
-  p code, li code {
-    background: var(--bg-raise); border: 1px solid var(--border);
-    padding: 1px 6px; border-radius: 4px; font-size: .92em;
-  }
-
-  .guarantee {
-    border-left: 3px solid var(--green); background: var(--bg-raise);
-    padding: 20px 24px; border-radius: 0 8px 8px 0; margin-top: 8px;
-  }
-  .guarantee p { color: var(--dim); font-size: 14px; }
-  .guarantee strong { color: var(--text); }
-
-  .cmds { list-style: none; margin-top: 8px; }
-  .cmds li {
-    display: flex; gap: 18px; padding: 12px 0;
-    border-bottom: 1px solid var(--border); font-size: 14px;
-    flex-wrap: wrap;
-  }
-  .cmds li:last-child { border-bottom: none; }
-  .cmds code { min-width: 260px; color: var(--green); background: none; border: none; padding: 0; }
-  .cmds span { color: var(--dim); flex: 1; min-width: 240px; }
+  pre.code .k { color: var(--accent); }
+  pre.code .s { color: #4ade80; }
+  pre.code .cm { color: #ffffff59; }
 
   footer {
-    margin-top: 96px; padding: 32px 0 48px;
-    border-top: 1px solid var(--border);
-    display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px;
-    color: var(--faint); font-size: 13px;
+    margin-top: 88px; padding: 28px 0 44px; border-top: 1px solid #ffffff1a;
+    display: flex; justify-content: space-between; flex-wrap: wrap; gap: 10px;
+    font-size: 12.5px; color: #ffffff8c;
   }
-  footer a { color: var(--dim); }
+  footer a:hover { color: #fff; }
 </style>
 </head>
 <body>
+<canvas id="bg"></canvas>
+<div class="vignette"></div>
+<div class="scanlines"></div>
+
 <div class="wrap">
 
 <nav>
-  <div class="logo"><span>▶▶</span> rewind</div>
-  <div class="links">
-    <a href="#demo">demo</a>
-    <a href="#how">how</a>
-    <a href="#start">quick start</a>
-    <a href="https://github.com/mihhhir08/rewind">github</a>
-  </div>
+  <div class="logo"><b><span>▶▶</span> rewind</b><em>record · replay · fork</em></div>
+  <a class="gh" href="https://github.com/mihhhir08/rewind">GitHub ↗</a>
 </nav>
 
 <header>
-  <div class="kicker">rr for agents</div>
-  <h1>Your agent crashed on step 47 of 50.<br>Run it again — <em>offline, byte-exact, $0.</em></h1>
-  <p class="sub">
-    <strong>rewind</strong> is a deterministic record/replay debugger for LLM agents.
-    Record a run once; replay it forever without a network or an API key.
-    Fork any step to compute the future that <strong>would have</strong> happened.
-  </p>
+  <h1>Stop re-running your agent to reproduce one bug.</h1>
+  <p class="sub">rewind records a run once, then replays it byte-exact — offline, no API key, $0.
+  Fork any step to compute the future that would have happened.</p>
   <div class="cta">
-    <a class="btn btn-primary" href="https://github.com/mihhhir08/rewind">View on GitHub →</a>
-    <a class="btn btn-ghost" href="#demo">Watch the demo</a>
+    <a class="btn btn-solid" href="https://github.com/mihhhir08/rewind">Get rewind</a>
+    <a class="btn btn-line" href="#start">Quick start</a>
   </div>
 </header>
 
-<section id="demo">
-  <div class="term">
-    <div class="term-bar">
-      <div class="dot"></div><div class="dot"></div><div class="dot"></div>
-      <div class="term-title">rewind — demo/agent.ts</div>
-    </div>
-    <div class="term-body" id="term"></div>
-  </div>
-</section>
+<div class="stats">
+  <div class="stat"><b>1<i>×</i> record → ∞ replays</b><span>every run replays forever</span></div>
+  <div class="stat"><b><i>$</i>0 per replay</b><span>zero network, zero tokens</span></div>
+  <div class="stat"><b>byte-exact</b><span>down to SSE chunk boundaries</span></div>
+</div>
 
-<section id="why">
-  <h2>The problem</h2>
-  <p class="lede">
-    Reproducing an agent failure today means re-running every step, paying for every token,
-    and hoping the model takes the same path. It won't. Observability tools show you what
-    happened — rewind lets you <strong style="color:var(--text)">run it again</strong>.
-  </p>
-  <div class="grid">
-    <div class="card">
-      <h3>Replay, don't re-run</h3>
-      <p>Recorded responses are served straight from a local SQLite journal — including exact
-      SSE chunk boundaries. The real SDK consumes replayed streams without knowing the difference.
-      No network. No key. No cost.</p>
-    </div>
-    <div class="card">
-      <h3>Fork the timeline</h3>
-      <p><em style="color:var(--text);font-style:normal">What if the model had said something else?</em>
-      Rewrite any recorded response and replay the edit. Hybrid replay serves history from the
-      journal and goes live only past the divergence — once.</p>
-    </div>
-    <div class="card">
-      <h3>Diff two futures</h3>
-      <p><code>rewind diff</code> compares runs event-by-event and pinpoints the first divergence —
-      including the subtle case of <em style="font-style:normal">same request, different response</em>.</p>
-    </div>
-    <div class="card">
-      <h3>Closed under replay</h3>
-      <p>Every run in the journal — original or forked — replays fully offline. Hybrid replay
-      journals everything into a new run, so counterfactuals are as replayable as the original.</p>
-    </div>
-  </div>
-</section>
+<div class="term">
+  <div class="term-bar"><div class="dot"></div><div class="dot"></div><div class="dot"></div><span>demo — crash at the last step, 3 paid LLM calls deep</span></div>
+  <div class="term-body"><span class="p">rewind record -- npx tsx demo/agent.ts</span>
+<span class="err">✗ TypeError: Cannot read properties of undefined (reading 'toFixed')</span>
 
-<section id="how">
-  <h2>Why this is hard</h2>
-  <div class="grid">
-    <div class="card">
-      <h3>"Same request" has no obvious definition</h3>
-      <p>Bodies serialize with unstable key order; headers carry per-attempt noise. rewind
-      canonicalizes and fingerprints requests with a volatile-header blocklist — chosen so a
-      wrong fingerprint fails <em style="font-style:normal">loud</em> (replay miss) instead of
-      lying (silent corruption).</p>
-    </div>
-    <div class="card">
-      <h3>Concurrency breaks naive matching</h3>
-      <p>When identical requests race, journal order is completion order — but each caller needs
-      <em style="font-style:normal">their</em> response back. rewind records arrival order
-      separately and pairs by it, keeping transcripts byte-exact under races.</p>
-    </div>
-    <div class="card">
-      <h3>Streams are not bodies</h3>
-      <p>SDK parsers are sensitive to SSE framing, so rewind records and replays the exact chunk
-      boundaries — and re-frames edited responses into valid SSE so the SDK can still parse a
-      forked stream.</p>
-    </div>
-    <div class="card">
-      <h3>No proxy, no monkey-patching</h3>
-      <p>rewind injects a recording <code>fetch</code> at the SDK transport boundary. No MITM
-      certificates, no global patches, no traffic outside your process.</p>
-    </div>
-  </div>
-</section>
+<span class="p">rewind replay 3f2a91c4 -- npx tsx demo/agent.ts</span>
+<span class="err">✗ same crash</span> <span class="c">· offline · $0.00</span>
+
+<span class="p">vim demo/agent.ts</span>   <span class="c"># one-line fix</span>
+<span class="p">rewind replay 3f2a91c4 -- npx tsx demo/agent.ts</span>
+<span class="ok">✓ audit complete — $5522.61</span> <span class="c">· fix verified without a single API call</span>
+
+<span class="p">rewind fork 3f2a91c4 --at 4 --text '{"total_usd": 0}'</span>   <span class="c"># what if the model said $0?</span>
+<span class="p">rewind diff 3f2a91c4 9be07d12</span>
+<span class="pink">first divergence at seq 4</span> <span class="c">— same request, different response</span></div>
+</div>
+
+<div class="grid">
+  <div class="card"><h3>replay</h3><p>Responses come from a local SQLite journal with exact SSE framing. The SDK can't tell the difference.</p></div>
+  <div class="card"><h3>fork</h3><p>Rewrite any recorded response and replay the alternate timeline.</p></div>
+  <div class="card"><h3>diff</h3><p>Compare two runs event-by-event, pinned to the first divergence.</p></div>
+  <div class="card"><h3>closed under replay</h3><p>Forks re-journal into new runs, so counterfactuals replay offline too.</p></div>
+</div>
 
 <section id="start">
   <h2>Quick start</h2>
-  <p class="lede">The whole integration is two lines.</p>
 <pre class="code"><span class="k">import</span> Anthropic <span class="k">from</span> <span class="s">"@anthropic-ai/sdk"</span>;
 <span class="k">import</span> { fromEnv } <span class="k">from</span> <span class="s">"rewind"</span>;
 
 <span class="k">const</span> session = fromEnv();
 <span class="k">const</span> client = <span class="k">new</span> Anthropic({ fetch: session.fetch });
-
-<span class="c">// wrap other non-determinism (tools, time, randomness):</span>
-<span class="k">const</span> rate = <span class="k">await</span> session.io(<span class="s">"fx_rate"</span>, fetchRate);</pre>
-
-  <p class="lede" style="margin-top:32px">Then drive everything from the CLI:</p>
-  <ul class="cmds">
-    <li><code>rewind record -- node agent.js</code><span>run live, journal every LLM call, tool result, and io</span></li>
-    <li><code>rewind replay &lt;run&gt; -- node agent.js</code><span>re-run offline: recorded responses, no key needed</span></li>
-    <li><code>rewind fork &lt;run&gt; --at 46 --text …</code><span>rewrite step 46, compute the alternate future</span></li>
-    <li><code>rewind diff &lt;run&gt; &lt;fork&gt;</code><span>see exactly where and how the futures diverge</span></li>
-    <li><code>rewind step &lt;run&gt;</code><span>walk the timeline interactively, event by event</span></li>
-  </ul>
-</section>
-
-<section>
-  <h2>The guarantee, stated precisely</h2>
-  <div class="guarantee">
-    <p>Replay is deterministic <strong>at the SDK I/O boundary</strong>. If your agent's only
-    non-determinism flows through the wrapped client and <code>io()</code>, replay reproduces
-    recorded values byte-exact — including which racing caller got which response. rewind does
-    not (and does not claim to) control instruction-level or OS-level non-determinism.</p>
-  </div>
+<span class="cm">// wrap other non-determinism: await session.io("fx_rate", fetchRate)</span></pre>
+<pre class="code">rewind record -- node agent.js          <span class="cm"># run live, journal everything</span>
+rewind replay &lt;run&gt; -- node agent.js    <span class="cm"># re-run offline</span>
+rewind fork &lt;run&gt; --at 46 --text …      <span class="cm"># rewrite step 46</span>
+rewind diff &lt;run&gt; &lt;fork&gt;                <span class="cm"># where the futures diverge</span></pre>
 </section>
 
 <footer>
-  <div>Built by <a href="https://github.com/mihhhir08">Mihirsinh Chavda</a> · MIT License</div>
+  <div><a href="https://github.com/mihhhir08">Mihirsinh Chavda</a> · MIT</div>
   <div><a href="https://github.com/mihhhir08/rewind">github.com/mihhhir08/rewind</a></div>
 </footer>
 
@@ -302,71 +207,146 @@
 
 <script>
 (function () {
-  var lines = [
-    { t: "$ rewind record -- npx tsx demo/agent.ts", cls: "p", d: 900 },
-    { t: "[rewind] recording run 3f2a91c4", cls: "dim", d: 500 },
-    { t: "  auditing 5 expenses…  (3 paid LLM calls)", cls: "dim", d: 1100 },
-    { t: "TypeError: Cannot read properties of undefined (reading 'toFixed')", cls: "err", d: 300 },
-    { t: "    at runAudit (demo/agent.ts:78)   ← crashes at the LAST step", cls: "err", d: 1400 },
-    { t: "", cls: "", d: 100 },
-    { t: "$ rewind replay 3f2a91c4 -- npx tsx demo/agent.ts", cls: "p", d: 900 },
-    { t: "TypeError: Cannot read properties of undefined (reading 'toFixed')", cls: "err", d: 300 },
-    { t: "  same crash · fully offline · no API key · $0.00", cls: "warn", d: 1400 },
-    { t: "", cls: "", d: 100 },
-    { t: "$ vim demo/agent.ts   # fix the one-line bug", cls: "p", d: 900 },
-    { t: "$ rewind replay 3f2a91c4 -- npx tsx demo/agent.ts", cls: "p", d: 900 },
-    { t: "✓ audit complete — total $5522.61, flagged: e4, e5", cls: "ok", d: 500 },
-    { t: "  fix verified offline · $0.00", cls: "ok", d: 1500 },
-    { t: "", cls: "", d: 100 },
-    { t: "$ rewind fork 3f2a91c4 --at 4 --text '{\"total_usd\": 0, \"flagged\": []}'", cls: "p", d: 900 },
-    { t: "forked 3f2a91c4@4 → 9be07d12   # what if the model had said $0?", cls: "dim", d: 800 },
-    { t: "$ rewind diff 3f2a91c4 9be07d12", cls: "p", d: 800 },
-    { t: "first divergence at seq 4 — changed (same request, different response)", cls: "ok", d: 2600 }
-  ];
+  var canvas = document.getElementById("bg");
+  var gl = canvas.getContext("webgl2", { antialias: false });
+  if (!gl) return;
 
-  var el = document.getElementById("term");
-  var cursor = document.createElement("span");
-  cursor.className = "cursor";
+  var vsrc = "#version 300 es\nin vec2 a;void main(){gl_Position=vec4(a,0.,1.);}";
+  var fsrc = `#version 300 es
+precision highp float;
+uniform vec2 resolution;
+uniform float time;
+uniform vec2 mousePos;
+out vec4 fragColor;
 
-  function typeLine(i) {
-    if (i >= lines.length) {
-      setTimeout(function () { el.textContent = ""; el.appendChild(cursor); typeLine(0); }, 3500);
-      return;
-    }
-    var line = lines[i];
-    var span = document.createElement("span");
-    if (line.cls) span.className = line.cls;
-    el.insertBefore(span, cursor);
-    var isCmd = line.t.charAt(0) === "$";
-    var j = 0;
-    function tick() {
-      if (j <= line.t.length) {
-        span.textContent = line.t.slice(0, j);
-        j += isCmd ? 1 : 4;
-        setTimeout(tick, isCmd ? 18 : 8);
-      } else {
-        span.textContent = line.t;
-        el.insertBefore(document.createTextNode("\n"), cursor);
-        setTimeout(function () { typeLine(i + 1); }, line.d);
-      }
-    }
-    tick();
-  }
+const float PIXEL = 3.0;
+const float COLORS = 4.0;
+const vec3 WAVE_COLOR = vec3(1.0, 0.137, 0.565);
+const float SPEED = 0.04;
+const float FREQ = 3.0;
+const float AMP = 0.3;
+const float MOUSE_R = 0.35;
 
-  el.appendChild(cursor);
-  var started = false;
-  function start() {
-    if (started) return;
-    started = true;
-    typeLine(0);
+vec4 mod289(vec4 x){return x-floor(x*(1.0/289.0))*289.0;}
+vec4 permute(vec4 x){return mod289(((x*34.0)+1.0)*x);}
+vec4 taylorInvSqrt(vec4 r){return 1.79284291400159-0.85373472095314*r;}
+vec2 fade(vec2 t){return t*t*t*(t*(t*6.0-15.0)+10.0);}
+
+float cnoise(vec2 P){
+  vec4 Pi=floor(P.xyxy)+vec4(0.0,0.0,1.0,1.0);
+  vec4 Pf=fract(P.xyxy)-vec4(0.0,0.0,1.0,1.0);
+  Pi=mod289(Pi);
+  vec4 ix=Pi.xzxz; vec4 iy=Pi.yyww;
+  vec4 fx=Pf.xzxz; vec4 fy=Pf.yyww;
+  vec4 i=permute(permute(ix)+iy);
+  vec4 gx=fract(i*(1.0/41.0))*2.0-1.0;
+  vec4 gy=abs(gx)-0.5;
+  vec4 tx=floor(gx+0.5);
+  gx=gx-tx;
+  vec2 g00=vec2(gx.x,gy.x); vec2 g10=vec2(gx.y,gy.y);
+  vec2 g01=vec2(gx.z,gy.z); vec2 g11=vec2(gx.w,gy.w);
+  vec4 norm=taylorInvSqrt(vec4(dot(g00,g00),dot(g01,g01),dot(g10,g10),dot(g11,g11)));
+  g00*=norm.x; g01*=norm.y; g10*=norm.z; g11*=norm.w;
+  float n00=dot(g00,vec2(fx.x,fy.x));
+  float n10=dot(g10,vec2(fx.y,fy.y));
+  float n01=dot(g01,vec2(fx.z,fy.z));
+  float n11=dot(g11,vec2(fx.w,fy.w));
+  vec2 fade_xy=fade(Pf.xy);
+  vec2 n_x=mix(vec2(n00,n01),vec2(n10,n11),fade_xy.x);
+  return 2.3*mix(n_x.x,n_x.y,fade_xy.y);
+}
+
+float fbm(vec2 p){
+  float v=0.0; float amp=1.0; float freq=FREQ;
+  for(int i=0;i<4;i++){ v+=amp*abs(cnoise(p)); p*=freq; amp*=AMP; }
+  return v;
+}
+float pattern(vec2 p){ vec2 p2=p-time*SPEED; return fbm(p+fbm(p2)); }
+
+const float bayer[64]=float[64](
+  0.0/64.0,48.0/64.0,12.0/64.0,60.0/64.0, 3.0/64.0,51.0/64.0,15.0/64.0,63.0/64.0,
+ 32.0/64.0,16.0/64.0,44.0/64.0,28.0/64.0,35.0/64.0,19.0/64.0,47.0/64.0,31.0/64.0,
+  8.0/64.0,56.0/64.0, 4.0/64.0,52.0/64.0,11.0/64.0,59.0/64.0, 7.0/64.0,55.0/64.0,
+ 40.0/64.0,24.0/64.0,36.0/64.0,20.0/64.0,43.0/64.0,27.0/64.0,39.0/64.0,23.0/64.0,
+  2.0/64.0,50.0/64.0,14.0/64.0,62.0/64.0, 1.0/64.0,49.0/64.0,13.0/64.0,61.0/64.0,
+ 34.0/64.0,18.0/64.0,46.0/64.0,30.0/64.0,33.0/64.0,17.0/64.0,45.0/64.0,29.0/64.0,
+ 10.0/64.0,58.0/64.0, 6.0/64.0,54.0/64.0, 9.0/64.0,57.0/64.0, 5.0/64.0,53.0/64.0,
+ 42.0/64.0,26.0/64.0,38.0/64.0,22.0/64.0,41.0/64.0,25.0/64.0,37.0/64.0,21.0/64.0);
+
+vec3 dither(vec2 coord, vec3 color){
+  vec2 sc=floor(coord/PIXEL);
+  int x=int(mod(sc.x,8.0));
+  int y=int(mod(sc.y,8.0));
+  float threshold=bayer[y*8+x]-0.25;
+  float stp=1.0/(COLORS-1.0);
+  color+=threshold*stp;
+  color=clamp(color-0.2,0.0,1.0);
+  return floor(color*(COLORS-1.0)+0.5)/(COLORS-1.0);
+}
+
+void main(){
+  vec2 pc=floor(gl_FragCoord.xy/PIXEL)*PIXEL+PIXEL*0.5;
+  vec2 uv=pc/resolution-0.5;
+  uv.x*=resolution.x/resolution.y;
+  float f=pattern(uv);
+  vec2 m=(mousePos/resolution-0.5)*vec2(1.0,-1.0);
+  m.x*=resolution.x/resolution.y;
+  float d=length(uv-m);
+  f-=0.5*(1.0-smoothstep(0.0,MOUSE_R,d));
+  vec3 col=mix(vec3(0.0),WAVE_COLOR,f);
+  fragColor=vec4(dither(gl_FragCoord.xy,col),1.0);
+}`;
+
+  function compile(type, src) {
+    var s = gl.createShader(type);
+    gl.shaderSource(s, src);
+    gl.compileShader(s);
+    return s;
   }
-  if ("IntersectionObserver" in window) {
-    new IntersectionObserver(function (entries, obs) {
-      if (entries[0].isIntersecting) { start(); obs.disconnect(); }
-    }, { threshold: 0.25 }).observe(el);
-  } else {
-    start();
+  var prog = gl.createProgram();
+  gl.attachShader(prog, compile(gl.VERTEX_SHADER, vsrc));
+  gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, fsrc));
+  gl.linkProgram(prog);
+  if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+    console.error("rewind bg:", gl.getProgramInfoLog(prog));
+    return;
   }
+  gl.useProgram(prog);
+
+  var buf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 3,-1, -1,3]), gl.STATIC_DRAW);
+  var loc = gl.getAttribLocation(prog, "a");
+  gl.enableVertexAttribArray(loc);
+  gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+
+  var uRes = gl.getUniformLocation(prog, "resolution");
+  var uTime = gl.getUniformLocation(prog, "time");
+  var uMouse = gl.getUniformLocation(prog, "mousePos");
+
+  var mouse = [-9999, -9999];
+  addEventListener("pointermove", function (e) {
+    mouse[0] = e.clientX;
+    mouse[1] = e.clientY;
+  });
+
+  function resize() {
+    canvas.width = innerWidth;
+    canvas.height = innerHeight;
+    gl.viewport(0, 0, canvas.width, canvas.height);
+  }
+  addEventListener("resize", resize);
+  resize();
+
+  var reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  function frame(t) {
+    gl.uniform2f(uRes, canvas.width, canvas.height);
+    gl.uniform1f(uTime, reduced ? 0 : t / 1000);
+    gl.uniform2f(uMouse, mouse[0], mouse[1]);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+    if (!reduced) requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
 })();
 </script>
 </body>
