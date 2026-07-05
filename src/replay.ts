@@ -1,7 +1,7 @@
 import { fingerprint } from "./canonical.js";
 import { decodeResponseEnvelope, envelopeToResponse } from "./envelope.js";
 import type { Journal, JournalEvent, RunId } from "./journal.js";
-import { requestFromFetchArgs } from "./record.js";
+import { performAndJournal, requestFromFetchArgs } from "./record.js";
 
 export interface ReplayFetchOptions {
   policy: "strict";
@@ -78,6 +78,41 @@ export function createReplayFetch(journal: Journal, run: RunId, _opts: ReplayFet
         cursor.describeMiss(fp),
       );
     }
+    return envelopeToResponse(decodeResponseEnvelope(event.response));
+  }) as typeof fetch;
+}
+
+/** Hybrid policy: serve journal hits offline, fall through to the live API on
+ * miss — and journal BOTH into a new run. That closure property is what makes
+ * forked/diverged runs themselves replayable offline under strict. */
+export function createHybridFetch(
+  journal: Journal,
+  sourceRun: RunId,
+  targetRun: RunId,
+  base: typeof fetch,
+): typeof fetch {
+  const cursor = new EventCursor(journal.eventsForRun(sourceRun), "llm_call");
+  let arrival = 0;
+
+  return (async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+    const arrivalIndex = arrival;
+    arrival += 1;
+    const record = await requestFromFetchArgs(input, init);
+    const fp = fingerprint(record);
+    const event = cursor.next(fp);
+    if (event === undefined) {
+      return performAndJournal(journal, targetRun, base, input, init, record, fp, arrivalIndex);
+    }
+    journal.appendEvent(targetRun, {
+      kind: "llm_call",
+      fingerprint: event.fingerprint,
+      request: event.request,
+      response: event.response,
+      streamed: event.streamed,
+      // arrivalIndex must reflect THIS replay's issue order (shared counter
+      // with live misses) or the new run won't replay deterministically.
+      meta: { ...event.meta, arrivalIndex, replayedFromSeq: event.seq },
+    });
     return envelopeToResponse(decodeResponseEnvelope(event.response));
   }) as typeof fetch;
 }

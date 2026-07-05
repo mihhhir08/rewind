@@ -3,4 +3,5 @@ export { Journal, type JournalEvent, type RunId, type RunSummary } from "./journ
 export { createRecordingFetch } from "./record.js";
 export { createReplayFetch, ReplayMissError } from "./replay.js";
 export { IoSerializationError, type IoFn } from "./io.js";
+export { editResponseBody, forkRun, type ForkOptions } from "./fork.js";
 export { fromEnv, record, replay, type RecordOptions, type ReplayOptions, type Session } from "./session.js";

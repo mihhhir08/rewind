@@ -1,7 +1,7 @@
-import { createRecordingIo, createReplayIo, type IoFn } from "./io.js";
+import { createHybridIo, createRecordingIo, createReplayIo, type IoFn } from "./io.js";
 import { Journal, type RunId } from "./journal.js";
 import { createRecordingFetch } from "./record.js";
-import { createReplayFetch } from "./replay.js";
+import { createHybridFetch, createReplayFetch } from "./replay.js";
 
 export interface Session {
   mode: "record" | "replay";
@@ -35,6 +35,15 @@ export function record(opts: RecordOptions): Session {
 export interface ReplayOptions {
   journal: string;
   run: RunId;
+  /** strict (default): any miss throws ReplayMissError, zero network.
+   * hybrid: misses fall through to the live API; everything served (hits AND
+   * live fallbacks) is journaled into a NEW run, so the session's runId is a
+   * child run that itself replays offline under strict. */
+  policy?: "strict" | "hybrid";
+  /** Label for the new run created by hybrid replay. */
+  label?: string;
+  /** Upstream transport for hybrid misses; defaults to global fetch. */
+  base?: typeof fetch;
 }
 
 /** Session wired from the environment — the handshake used by the rewind CLI.
@@ -59,6 +68,19 @@ export function fromEnv(defaults: { journal?: string; label?: string; base?: typ
 
 export function replay(opts: ReplayOptions): Session {
   const journal = Journal.open(opts.journal);
+  if (opts.policy === "hybrid") {
+    const runId = journal.createRun({
+      parentRunId: opts.run,
+      ...(opts.label !== undefined ? { label: opts.label } : {}),
+    });
+    return {
+      mode: "replay",
+      runId,
+      fetch: createHybridFetch(journal, opts.run, runId, opts.base ?? fetch),
+      io: createHybridIo(journal, journal.eventsForRun(opts.run), runId),
+      finish: () => journal.close(),
+    };
+  }
   return {
     mode: "replay",
     runId: opts.run,

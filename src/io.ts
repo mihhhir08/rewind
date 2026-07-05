@@ -24,48 +24,68 @@ export class IoSerializationError extends Error {
 
 export function createRecordingIo(journal: Journal, run: RunId): IoFn {
   let arrival = 0;
-  return async <T>(name: string, fn: () => T | Promise<T>): Promise<T> => {
+  return <T>(name: string, fn: () => T | Promise<T>): Promise<T> => {
     const arrivalIndex = arrival;
     arrival += 1;
-    const started = performance.now();
-    let result: IoResult;
-    let thrown: unknown;
-    let didThrow = false;
-    try {
-      const value = await fn();
-      result = { ok: true, value };
-    } catch (err) {
-      didThrow = true;
-      thrown = err;
-      const e = err instanceof Error ? err : new Error(String(err));
-      result = { ok: false, error: { name: e.name, message: e.message } };
-    }
-
-    let serialized: string;
-    try {
-      serialized = JSON.stringify(result);
-      if (serialized === undefined) throw new Error("result serialized to undefined");
-    } catch (cause) {
-      throw new IoSerializationError(name, cause);
-    }
-
-    journal.appendEvent(run, {
-      kind: "io",
-      fingerprint: ioFingerprint(name),
-      request: enc.encode(JSON.stringify({ name })),
-      response: enc.encode(serialized),
-      streamed: false,
-      meta: {
-        name,
-        ok: result.ok,
-        arrivalIndex,
-        durationMs: Math.round((performance.now() - started) * 1000) / 1000,
-      },
-    });
-
-    if (didThrow) throw thrown;
-    return (result as { ok: true; value: T }).value;
+    return executeAndJournalIo(journal, run, name, fn, arrivalIndex);
   };
+}
+
+async function executeAndJournalIo<T>(
+  journal: Journal,
+  run: RunId,
+  name: string,
+  fn: () => T | Promise<T>,
+  arrivalIndex: number,
+): Promise<T> {
+  const started = performance.now();
+  let result: IoResult;
+  let thrown: unknown;
+  let didThrow = false;
+  try {
+    const value = await fn();
+    result = { ok: true, value };
+  } catch (err) {
+    didThrow = true;
+    thrown = err;
+    const e = err instanceof Error ? err : new Error(String(err));
+    result = { ok: false, error: { name: e.name, message: e.message } };
+  }
+
+  let serialized: string;
+  try {
+    serialized = JSON.stringify(result);
+    if (serialized === undefined) throw new Error("result serialized to undefined");
+  } catch (cause) {
+    throw new IoSerializationError(name, cause);
+  }
+
+  journal.appendEvent(run, {
+    kind: "io",
+    fingerprint: ioFingerprint(name),
+    request: enc.encode(JSON.stringify({ name })),
+    response: enc.encode(serialized),
+    streamed: false,
+    meta: {
+      name,
+      ok: result.ok,
+      arrivalIndex,
+      durationMs: Math.round((performance.now() - started) * 1000) / 1000,
+    },
+  });
+
+  if (didThrow) throw thrown;
+  return (result as { ok: true; value: T }).value;
+}
+
+function unwrapIoResult<T>(response: Uint8Array): T {
+  const result = JSON.parse(dec.decode(response)) as IoResult;
+  if (!result.ok) {
+    const err = new Error(result.error.message);
+    err.name = result.error.name;
+    throw err;
+  }
+  return result.value as T;
 }
 
 export function createReplayIo(events: JournalEvent[]): IoFn {
@@ -78,12 +98,30 @@ export function createReplayIo(events: JournalEvent[]): IoFn {
           `The agent diverged from the recorded run, or this io call is new. ${cursor.describeMiss(ioFingerprint(name))}`,
       );
     }
-    const result = JSON.parse(dec.decode(event.response)) as IoResult;
-    if (!result.ok) {
-      const err = new Error(result.error.message);
-      err.name = result.error.name;
-      throw err;
+    return unwrapIoResult<T>(event.response);
+  };
+}
+
+/** Hybrid io: journal hits replay WITHOUT executing fn; misses execute live.
+ * Both re-journal into targetRun so the hybrid run replays offline (closure). */
+export function createHybridIo(journal: Journal, sourceEvents: JournalEvent[], targetRun: RunId): IoFn {
+  const cursor = new EventCursor(sourceEvents, "io");
+  let arrival = 0;
+  return async <T>(name: string, fn: () => T | Promise<T>): Promise<T> => {
+    const arrivalIndex = arrival;
+    arrival += 1;
+    const event = cursor.next(ioFingerprint(name));
+    if (!event) {
+      return executeAndJournalIo(journal, targetRun, name, fn, arrivalIndex);
     }
-    return result.value as T;
+    journal.appendEvent(targetRun, {
+      kind: "io",
+      fingerprint: event.fingerprint,
+      request: event.request,
+      response: event.response,
+      streamed: false,
+      meta: { ...event.meta, arrivalIndex, replayedFromSeq: event.seq },
+    });
+    return unwrapIoResult<T>(event.response);
   };
 }

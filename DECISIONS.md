@@ -37,3 +37,21 @@ Every architectural fork in the road, what was chosen, what was rejected, and wh
 **Chose:** side effects outside the LLM call (tool executions, `Date.now`, `Math.random`) are journaled via an explicit `io("name", fn)` wrapper.
 **Rejected:** automatic syscall/module interception (rr-style) — that is a different, much larger project, and half-automatic capture would create a false sense of coverage.
 **Consequence:** the determinism boundary is explicit and honest: what flows through the wrapped client and `io()` replays deterministically; nothing else is claimed.
+
+## D6 — Hybrid replay re-journals EVERYTHING into a new run (the closure property)
+
+**Chose:** hybrid policy never mutates or extends the source run. It creates a child run and journals every event it serves — journal hits are copied (with a fresh `arrivalIndex` and a `replayedFromSeq` back-pointer), live fallbacks go through the exact same code path as plain recording (`performAndJournal` is shared, not duplicated).
+**Rejected:** appending only the live misses to the source run — the source run stops being an immutable record of what actually happened, and the combined run is not replayable (its event order interleaves two different executions). Also rejected journaling only misses into the child run — then the child is a fragment that needs its parent plus consumption bookkeeping to replay; nothing downstream can treat runs uniformly.
+**Consequence:** the invariant every workflow leans on: **any run in the journal — original, hybrid, or forked — replays fully offline under strict policy.** Runs are closed under replay. This is what makes "fork the past, compute the counterfactual future, then step through that future offline as many times as you want" a one-liner instead of a special case.
+
+## D7 — Fork = copy prefix, rewrite one event, drop the future
+
+**Chose:** `forkRun(journal, {from, atSeq, edit})` copies events `[0, atSeq)` verbatim into a child run (recording `parentRunId`/`forkedAtSeq` lineage), appends the event at `atSeq` with an edited response (same fingerprint, same request, `meta.edited: true`), and copies nothing after it.
+**Rejected:** copying post-fork events too — once history changed at `atSeq`, the recorded future is a lie: later requests embedded the *original* response in their context, so their fingerprints can never match the diverged execution, and any that accidentally did match (context-independent requests) would serve stale answers for the wrong reason. The old future must be recomputed, not replayed. Also rejected editing in place — destroys the original run.
+**Consequence:** replaying a fork under hybrid does exactly the right thing with zero fork-specific logic: prefix hits the journal, the edited event hits the journal, the first post-divergence request misses (its context now embeds the edit) and falls through live, and D6 guarantees the diverged future is captured as a new replayable run. Edited SSE responses are re-framed into chunks on `\n\n` event boundaries so SDK stream parsers still consume them incrementally.
+
+## D5a — Copied events keep their original `arrivalIndex`; hybrid assigns fresh ones
+
+**Chose:** fork-copied prefix events keep original meta untouched (they ARE the original events); hybrid-journaled events get the replaying session's own arrival counter, shared between hits and misses.
+**Rejected:** reusing source arrivalIndexes during hybrid replay — hits and live misses would draw from two unrelated counters, producing collisions/gaps, and the child run would violate D5's pairing invariant on its next replay.
+**Consequence:** every run in the journal satisfies the same D5 invariant by construction, so `EventCursor` needs no knowledge of where a run came from.
