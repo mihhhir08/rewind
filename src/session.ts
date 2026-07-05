@@ -57,6 +57,16 @@ export function fromEnv(defaults: { journal?: string; label?: string; base?: typ
     if (run === undefined || run === "") {
       throw new Error("[rewind] REWIND_MODE=replay requires REWIND_RUN to be set");
     }
+    if (process.env["REWIND_POLICY"] === "hybrid") {
+      const session = replay({
+        journal,
+        run,
+        policy: "hybrid",
+        ...(defaults.base !== undefined ? { base: defaults.base } : {}),
+      });
+      console.error(`[rewind] hybrid replay of ${run} — recording into new run ${session.runId}`);
+      return session;
+    }
     return replay({ journal, run });
   }
   return record({

@@ -65,6 +65,30 @@ describe("rewind CLI", () => {
     expect(out).toContain("llm_call");
   });
 
+  it("fork: creates a child run with an edited response, visible in runs/show", () => {
+    const out = cli([
+      "fork",
+      runId.slice(0, 8),
+      "--at",
+      "0",
+      "--response",
+      JSON.stringify(messageJson("EDITED")),
+      "--label",
+      "what-if",
+      "--journal",
+      journalPath,
+    ]);
+    expect(out).toContain("forked");
+
+    const runsOut = cli(["runs", "--journal", journalPath]);
+    expect(runsOut).toContain("what-if");
+    expect(runsOut).toContain(`${runId.slice(0, 8)}@0`); // parent lineage
+
+    const forkId = /→ ([0-9a-f]{8})/.exec(out)![1]!;
+    const showOut = cli(["show", forkId, "--journal", journalPath]);
+    expect(showOut).toContain("llm_call");
+  });
+
   it("replay: re-executes the agent subprocess fully offline via env handshake", () => {
     // options must precede positionals: everything after the run id is
     // passed through to the child command untouched

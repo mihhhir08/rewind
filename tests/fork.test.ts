@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { editResponseBody, forkRun } from "../src/fork.js";
 import { Journal } from "../src/journal.js";
-import { record, replay } from "../src/session.js";
+import { fromEnv, record, replay } from "../src/session.js";
 import { createFakeAnthropic, messageJson, sseChunksForText } from "./helpers/fake-anthropic.js";
 
 let dir: string;
@@ -189,6 +189,28 @@ describe("forkRun", () => {
     expect(body).toBe(newSse);
     expect(body).toContain("edited streamed".slice(0, 5));
     strict.finish();
+  });
+
+  it("fromEnv honors REWIND_POLICY=hybrid, re-recording into a child run", async () => {
+    const rec = record({ journal: path });
+    await rec.io("known", () => 1);
+    rec.finish();
+
+    const saved = { ...process.env };
+    process.env["REWIND_MODE"] = "replay";
+    process.env["REWIND_RUN"] = rec.runId;
+    process.env["REWIND_JOURNAL"] = path;
+    process.env["REWIND_POLICY"] = "hybrid";
+    try {
+      const s = fromEnv();
+      expect(s.mode).toBe("replay");
+      expect(s.runId).not.toBe(rec.runId);
+      expect(await s.io("known", () => 999)).toBe(1); // hit: recorded value wins
+      expect(await s.io("new", () => 2)).toBe(2); // miss: executes live
+      s.finish();
+    } finally {
+      process.env = saved;
+    }
   });
 
   it("rejects out-of-range fork points", async () => {

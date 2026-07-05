@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { Command } from "commander";
 import { diffRuns, eventWhat } from "./diff.js";
+import { editResponseBody, forkRun } from "./fork.js";
 import { Journal, type RunSummary } from "./journal.js";
 
 const program = new Command();
@@ -111,6 +113,36 @@ program
     }
   });
 
+program
+  .command("fork")
+  .description("Fork a run at an event, rewriting the recorded response (\"what if the model had said…\")")
+  .argument("<run>", "run id (prefix ok)")
+  .requiredOption("--at <seq>", "seq of the event to rewrite")
+  .option("--response <text>", "replacement response body (SSE text for streamed events)")
+  .option("--response-file <path>", "read the replacement body from a file")
+  .option("--label <label>", "label for the forked run")
+  .option("-j, --journal <path>", "journal database", DEFAULT_JOURNAL)
+  .action((runPrefix: string, opts: { at: string; response?: string; responseFile?: string; label?: string; journal: string }) => {
+    try {
+      const body = opts.responseFile !== undefined ? readFileSync(opts.responseFile, "utf8") : opts.response;
+      if (body === undefined) throw new Error("provide --response <text> or --response-file <path>");
+      const journal = openJournal(opts.journal);
+      const run = resolveRun(journal, runPrefix);
+      const forkId = forkRun(journal, {
+        from: run.id,
+        atSeq: Number(opts.at),
+        ...(opts.label !== undefined ? { label: opts.label } : {}),
+        edit: (event) => editResponseBody(event, body),
+      });
+      journal.close();
+      console.log(`forked ${run.id.slice(0, 8)}@${opts.at} → ${forkId.slice(0, 8)} (${forkId})`);
+      console.log(`compute the counterfactual future:`);
+      console.log(`  rewind replay ${forkId.slice(0, 8)} --policy hybrid -j ${opts.journal} -- <your agent command>`);
+    } catch (err) {
+      fail(err);
+    }
+  });
+
 function spawnWithEnv(rawCmd: string[], env: Record<string, string>): never {
   const cmd = rawCmd[0] === "--" ? rawCmd.slice(1) : rawCmd;
   if (cmd.length === 0) fail(new Error("no command given — usage: rewind <record|replay> [run] -- <cmd...>"));
@@ -137,14 +169,23 @@ program
   .description("Re-run a command offline against a recorded run (agent must use rewind.fromEnv())")
   .argument("<run>", "run id (prefix ok)")
   .option("-j, --journal <path>", "journal database", DEFAULT_JOURNAL)
+  .option("--policy <policy>", "strict (offline, miss = error) or hybrid (miss falls through live, re-records into a new run)", "strict")
   .argument("[cmd...]", "command to run")
   .passThroughOptions()
-  .action((runPrefix: string, cmd: string[], opts: { journal: string }) => {
+  .action((runPrefix: string, cmd: string[], opts: { journal: string; policy: string }) => {
     try {
+      if (opts.policy !== "strict" && opts.policy !== "hybrid") {
+        throw new Error(`unknown policy "${opts.policy}" (expected strict or hybrid)`);
+      }
       const journal = openJournal(opts.journal);
       const run = resolveRun(journal, runPrefix);
       journal.close();
-      spawnWithEnv(cmd, { REWIND_MODE: "replay", REWIND_RUN: run.id, REWIND_JOURNAL: opts.journal });
+      spawnWithEnv(cmd, {
+        REWIND_MODE: "replay",
+        REWIND_RUN: run.id,
+        REWIND_JOURNAL: opts.journal,
+        REWIND_POLICY: opts.policy,
+      });
     } catch (err) {
       fail(err);
     }

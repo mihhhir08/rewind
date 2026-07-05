@@ -120,3 +120,34 @@ describe("createRecordingFetch (non-streaming)", () => {
     expect(typeof meta["durationMs"]).toBe("number");
   });
 });
+
+describe("secret redaction", () => {
+  it("never stores api keys or cookies in the journal, and replay matching is unaffected", async () => {
+    const fake = createFakeAnthropic(() => ({ json: messageJson("hi") }));
+    const run = journal.createRun({});
+    const rec = createRecordingFetch(journal, run, fake.fetch);
+
+    await (
+      await rec(URL_, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: "Bearer sk-ant-SUPER-SECRET",
+          "x-api-key": "sk-ant-ALSO-SECRET",
+          cookie: "session=SECRET-COOKIE",
+        },
+        body: JSON.stringify({ turn: 0 }),
+      })
+    ).text();
+
+    const event = journal.eventsForRun(run)[0]!;
+    const storedRequest = new TextDecoder().decode(event.request);
+    expect(storedRequest).not.toContain("SUPER-SECRET");
+    expect(storedRequest).not.toContain("ALSO-SECRET");
+    expect(storedRequest).not.toContain("SECRET-COOKIE");
+    const headers = (JSON.parse(storedRequest) as { headers: Record<string, string> }).headers;
+    expect(headers["authorization"]).toBe("[redacted]");
+    expect(headers["x-api-key"]).toBe("[redacted]");
+    expect(headers["cookie"]).toBe("[redacted]");
+  });
+});

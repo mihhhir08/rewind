@@ -7,6 +7,21 @@ import {
 } from "./envelope.js";
 import type { Journal, RunId } from "./journal.js";
 
+// Journals are shareable artifacts ("attach it to the bug report"), so
+// credentials must never reach disk. Redaction happens here — before
+// fingerprinting AND before storage — in both record and replay paths, so
+// fingerprints stay consistent. Fingerprints strip authorization/x-api-key
+// as volatile anyway; cookie redacts to a constant, which both sides see.
+const SECRET_HEADERS = new Set(["authorization", "x-api-key", "cookie", "set-cookie", "proxy-authorization"]);
+
+function redactSecrets(headers: Record<string, string>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(headers)) {
+    out[k] = SECRET_HEADERS.has(k.toLowerCase()) ? "[redacted]" : v;
+  }
+  return out;
+}
+
 export async function requestFromFetchArgs(
   input: string | URL | Request,
   init?: RequestInit,
@@ -16,7 +31,7 @@ export async function requestFromFetchArgs(
   return {
     url: req.url,
     method: req.method,
-    headers: headersToRecord(req.headers),
+    headers: redactSecrets(headersToRecord(req.headers)),
     body: body === "" && init?.body === undefined ? null : body,
   };
 }
