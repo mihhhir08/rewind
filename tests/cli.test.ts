@@ -14,11 +14,12 @@ let dir: string;
 let journalPath: string;
 let runId: string;
 
-function cli(args: string[], env: Record<string, string> = {}): string {
+function cli(args: string[], env: Record<string, string> = {}, input?: string): string {
   return execFileSync(process.execPath, ["--import", "tsx", "src/cli.ts", ...args], {
     cwd: ROOT,
     env: { ...process.env, ...env },
     encoding: "utf8",
+    ...(input !== undefined ? { input } : {}),
   });
 }
 
@@ -63,6 +64,17 @@ describe("rewind CLI", () => {
   it("show: resolves run id prefixes", () => {
     const out = cli(["show", runId.slice(0, 8), "--journal", journalPath]);
     expect(out).toContain("llm_call");
+  });
+
+  it("step: walks the timeline event-by-event, showing request/response previews", () => {
+    // Each newline on stdin advances one event; EOF/q ends the session.
+    const out = cli(["step", runId.slice(0, 8), "--journal", journalPath], {}, "\n\n\n");
+    expect(out).toContain("event 0/");
+    expect(out).toContain("llm_call");
+    expect(out).toContain("recorded-answer"); // response text preview
+    expect(out).toContain("io(lookup)");
+    expect(out).toContain('{"value":42}'); // io result preview
+    expect(out).toContain("end of run");
   });
 
   it("fork: creates a child run with an edited response, visible in runs/show", () => {

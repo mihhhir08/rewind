@@ -1,10 +1,12 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
+import { createInterface, type Interface } from "node:readline";
 import { Command } from "commander";
 import { diffRuns, eventWhat } from "./diff.js";
+import { decodeRequestRecord, decodeResponseEnvelope } from "./envelope.js";
 import { editResponseBody, editResponseText, forkRun } from "./fork.js";
-import { Journal, type RunSummary } from "./journal.js";
+import { Journal, type JournalEvent, type RunSummary } from "./journal.js";
 
 const program = new Command();
 program
@@ -78,6 +80,85 @@ program
         console.log([String(e.seq), e.kind, what, status, stream, String(e.meta["durationMs"] ?? "?")].join("\t"));
       }
       journal.close();
+    } catch (err) {
+      fail(err);
+    }
+  });
+
+function clip(text: string, max = 300): string {
+  const t = text.replace(/\s+/g, " ").trim();
+  return t.length > max ? `${t.slice(0, max)}…` : t;
+}
+
+function requestPreview(e: JournalEvent): string {
+  if (e.kind === "io") return "(io input is the wrapped function)";
+  return decodeRequestRecord(e.request).body ?? "(no body)";
+}
+
+function responsePreview(e: JournalEvent): string {
+  if (e.kind === "io") return new TextDecoder().decode(e.response);
+  const env = decodeResponseEnvelope(e.response);
+  const raw = env.streamed
+    ? Buffer.concat(env.chunks.map((c) => Buffer.from(c))).toString("utf8")
+    : new TextDecoder().decode(env.body);
+  if (!env.streamed) {
+    try {
+      const msg = JSON.parse(raw) as { content?: Array<{ type: string; text?: string }> };
+      const text = msg.content
+        ?.filter((b) => b.type === "text")
+        .map((b) => b.text ?? "")
+        .join("");
+      if (text !== undefined && text !== "") return text;
+    } catch {
+      // not an Anthropic message — fall through to raw preview
+    }
+  }
+  return raw;
+}
+
+function nextLine(rl: Interface): Promise<string> {
+  return new Promise((resolve) => {
+    const onLine = (line: string) => {
+      rl.removeListener("close", onClose);
+      resolve(line);
+    };
+    const onClose = () => {
+      rl.removeListener("line", onLine);
+      resolve("");
+    };
+    rl.once("line", onLine);
+    rl.once("close", onClose);
+  });
+}
+
+program
+  .command("step")
+  .description("Step through a run's timeline event-by-event (Enter = next, q = quit)")
+  .argument("<run>", "run id (prefix ok)")
+  .option("-j, --journal <path>", "journal database", DEFAULT_JOURNAL)
+  .action(async (runPrefix: string, opts: { journal: string }) => {
+    try {
+      const journal = openJournal(opts.journal);
+      const run = resolveRun(journal, runPrefix);
+      const events = journal.eventsForRun(run.id);
+      journal.close();
+
+      console.log(`stepping run ${run.id.slice(0, 8)}${run.label === null ? "" : ` (${run.label})`} — ${events.length} events`);
+      const rl = createInterface({ input: process.stdin, terminal: false });
+      let quit = false;
+      for (const e of events) {
+        const status = e.kind === "io" ? (e.meta["ok"] === true ? "ok" : "err") : String(e.meta["status"] ?? "?");
+        const stream = e.streamed ? " · sse" : "";
+        console.log(`\n─── event ${e.seq}/${events.length - 1} · ${e.kind} · ${eventWhat(e)} · ${status}${stream}`);
+        console.log(`  request:  ${clip(requestPreview(e))}`);
+        console.log(`  response: ${clip(responsePreview(e))}`);
+        if ((await nextLine(rl)).trim().toLowerCase() === "q") {
+          quit = true;
+          break;
+        }
+      }
+      rl.close();
+      console.log(quit ? "stopped" : "end of run");
     } catch (err) {
       fail(err);
     }
@@ -194,4 +275,4 @@ program
     }
   });
 
-program.parse();
+await program.parseAsync();

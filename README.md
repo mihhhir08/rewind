@@ -30,6 +30,7 @@ That's the whole integration. Wrap tool calls and other non-determinism in `sess
 rewind record -- node agent.js       # run live, journal everything
 rewind runs                          # list recorded runs
 rewind show <run>                    # event timeline: every LLM call, tool, io
+rewind step <run>                    # walk the timeline interactively, event by event
 rewind replay <run> -- node agent.js # re-run offline: recorded responses, no key needed
 ```
 
@@ -86,7 +87,7 @@ Every architectural fork in the road, what was rejected, and why: [DECISIONS.md]
 
 ```bash
 npm install
-npm test        # 68 tests, incl. real-SDK stream integration and concurrency races
+npm test        # 69 tests, incl. real-SDK stream integration and concurrency races
 npx tsc --noEmit
 ```
 
