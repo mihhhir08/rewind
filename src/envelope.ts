@@ -70,12 +70,28 @@ export function headersToRecord(h: Headers): Record<string, string> {
   return out;
 }
 
-/** Rebuild a fetch Response from an envelope (non-streaming path). */
+/** Rebuild a fetch Response from an envelope. Streamed envelopes become a
+ * pull-based stream reproducing the recorded chunk boundaries; a recorded
+ * truncation replays as a mid-stream error after the last captured chunk. */
 export function envelopeToResponse(e: ResponseEnvelope): Response {
+  const init = { status: e.status, statusText: e.statusText, headers: e.headers };
+
+  if (e.streamed) {
+    let next = 0;
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (next < e.chunks.length) {
+          controller.enqueue(e.chunks[next]!);
+          next += 1;
+          return;
+        }
+        if (e.truncated) controller.error(new Error("[rewind] stream truncated (recorded upstream abort)"));
+        else controller.close();
+      },
+    });
+    return new Response(stream, init);
+  }
+
   const bodyAllowed = e.status !== 204 && e.status !== 205 && e.status !== 304;
-  return new Response(bodyAllowed ? Buffer.from(e.body) : null, {
-    status: e.status,
-    statusText: e.statusText,
-    headers: e.headers,
-  });
+  return new Response(bodyAllowed ? Buffer.from(e.body) : null, init);
 }
