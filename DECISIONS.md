@@ -20,6 +20,12 @@ Every architectural fork in the road, what was chosen, what was rejected, and wh
 **Rejected:** hashing the raw body bytes — identical requests serialize with different key order across SDK versions; auth/idempotency headers differ per attempt.
 **Consequence:** "same request" has a defined, testable meaning. This definition is load-bearing for replay matching.
 
+## D3a — Volatile headers are a blocklist, not an allowlist
+
+**Chose:** strip a known-volatile blocklist (`authorization`, `x-api-key`, `x-request-id`, `date`, `idempotency-key`, `user-agent`, transport headers, `x-stainless-*` SDK telemetry — including `x-stainless-retry-count`, which differs per attempt) and treat every remaining header as semantic.
+**Rejected:** allowlisting semantic headers (`anthropic-version`, `anthropic-beta`, `content-type`) — an unknown header that *does* change API behavior would then be silently ignored and two genuinely different requests would collide on one fingerprint. Wrong-response bugs are worse than missed-match bugs: a blocklist miss causes a replay MISS (loud, debuggable); an allowlist miss causes a wrong HIT (silent corruption).
+**Consequence:** fingerprints fail loud rather than lie. Arrays are never sorted during body canonicalization — message order is semantic.
+
 ## D4 — Explicit `io()` wrapper for tools, not automatic interception
 
 **Chose:** side effects outside the LLM call (tool executions, `Date.now`, `Math.random`) are journaled via an explicit `io("name", fn)` wrapper.
