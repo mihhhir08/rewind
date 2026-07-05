@@ -4,4 +4,5 @@ export { createRecordingFetch } from "./record.js";
 export { createReplayFetch, ReplayMissError } from "./replay.js";
 export { IoSerializationError, type IoFn } from "./io.js";
 export { editResponseBody, forkRun, type ForkOptions } from "./fork.js";
+export { diffRuns, type DiffEntry, type DiffStatus, type RunDiff } from "./diff.js";
 export { fromEnv, record, replay, type RecordOptions, type ReplayOptions, type Session } from "./session.js";

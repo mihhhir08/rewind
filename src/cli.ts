@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
 import { Command } from "commander";
+import { diffRuns, eventWhat } from "./diff.js";
 import { Journal, type RunSummary } from "./journal.js";
 
 const program = new Command();
@@ -69,15 +70,42 @@ program
       console.log(`run ${run.id}${run.label === null ? "" : ` (${run.label})`} — ${run.eventCount} events`);
       console.log(["SEQ", "KIND", "WHAT", "STATUS", "STREAM", "MS"].join("\t"));
       for (const e of journal.eventsForRun(run.id)) {
-        const what =
-          e.kind === "io"
-            ? `io(${String(e.meta["name"] ?? "?")})`
-            : `${String(e.meta["method"] ?? "?")} ${String(e.meta["url"] ?? "?")}`;
+        const what = eventWhat(e);
         const status = e.kind === "io" ? (e.meta["ok"] === true ? "ok" : "err") : String(e.meta["status"] ?? "?");
         const stream = e.streamed ? (e.meta["truncated"] === true ? "sse!" : "sse") : "-";
         console.log([String(e.seq), e.kind, what, status, stream, String(e.meta["durationMs"] ?? "?")].join("\t"));
       }
       journal.close();
+    } catch (err) {
+      fail(err);
+    }
+  });
+
+program
+  .command("diff")
+  .description("Compare two runs event-by-event")
+  .argument("<a>", "run id (prefix ok)")
+  .argument("<b>", "run id (prefix ok)")
+  .option("-j, --journal <path>", "journal database", DEFAULT_JOURNAL)
+  .action((aPrefix: string, bPrefix: string, opts: { journal: string }) => {
+    try {
+      const journal = openJournal(opts.journal);
+      const a = resolveRun(journal, aPrefix);
+      const b = resolveRun(journal, bPrefix);
+      const diff = diffRuns(journal, a.id, b.id);
+      journal.close();
+
+      console.log(`diff ${a.id.slice(0, 8)}${a.label === null ? "" : ` (${a.label})`} vs ${b.id.slice(0, 8)}${b.label === null ? "" : ` (${b.label})`}`);
+      if (diff.firstDivergenceSeq === null) {
+        console.log(`runs are identical (${diff.entries.length} events)`);
+        return;
+      }
+      console.log(`first divergence at seq ${diff.firstDivergenceSeq}`);
+      console.log(["SEQ", "STATUS", "KIND", "WHAT"].join("\t"));
+      for (const e of diff.entries) {
+        const status = e.status === "changed" && e.sameRequest ? "changed (same request, different response)" : e.status;
+        console.log([String(e.seq), status, e.kind, e.what].join("\t"));
+      }
     } catch (err) {
       fail(err);
     }
