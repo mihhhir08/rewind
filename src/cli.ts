@@ -1,0 +1,125 @@
+#!/usr/bin/env node
+import { spawnSync } from "node:child_process";
+import { Command } from "commander";
+import { Journal, type RunSummary } from "./journal.js";
+
+const program = new Command();
+program
+  .name("rewind")
+  .description("Deterministic record/replay debugger for LLM agents")
+  .enablePositionalOptions();
+
+const DEFAULT_JOURNAL = "default.rewind.db";
+
+function openJournal(path: string): Journal {
+  return Journal.open(path);
+}
+
+function resolveRun(journal: Journal, prefix: string): RunSummary {
+  const matches = journal.runs().filter((r) => r.id.startsWith(prefix));
+  if (matches.length === 1) return matches[0]!;
+  if (matches.length === 0) throw new Error(`no run matches "${prefix}"`);
+  throw new Error(`ambiguous run prefix "${prefix}" (${matches.length} matches)`);
+}
+
+function fail(err: unknown): never {
+  console.error(`rewind: ${err instanceof Error ? err.message : String(err)}`);
+  process.exit(1);
+}
+
+program
+  .command("runs")
+  .description("List recorded runs")
+  .option("-j, --journal <path>", "journal database", DEFAULT_JOURNAL)
+  .action((opts: { journal: string }) => {
+    try {
+      const journal = openJournal(opts.journal);
+      const runs = journal.runs();
+      if (runs.length === 0) {
+        console.log("no runs recorded");
+      } else {
+        console.log(["RUN", "LABEL", "CREATED", "EVENTS", "PARENT"].join("\t"));
+        for (const r of runs) {
+          console.log(
+            [
+              r.id.slice(0, 8),
+              r.label ?? "-",
+              r.createdAt,
+              String(r.eventCount),
+              r.parentRunId === null ? "-" : `${r.parentRunId.slice(0, 8)}@${r.forkedAtSeq ?? "?"}`,
+            ].join("\t"),
+          );
+        }
+      }
+      journal.close();
+    } catch (err) {
+      fail(err);
+    }
+  });
+
+program
+  .command("show")
+  .description("Show the event timeline of a run")
+  .argument("<run>", "run id (prefix ok)")
+  .option("-j, --journal <path>", "journal database", DEFAULT_JOURNAL)
+  .action((runPrefix: string, opts: { journal: string }) => {
+    try {
+      const journal = openJournal(opts.journal);
+      const run = resolveRun(journal, runPrefix);
+      console.log(`run ${run.id}${run.label === null ? "" : ` (${run.label})`} — ${run.eventCount} events`);
+      console.log(["SEQ", "KIND", "WHAT", "STATUS", "STREAM", "MS"].join("\t"));
+      for (const e of journal.eventsForRun(run.id)) {
+        const what =
+          e.kind === "io"
+            ? `io(${String(e.meta["name"] ?? "?")})`
+            : `${String(e.meta["method"] ?? "?")} ${String(e.meta["url"] ?? "?")}`;
+        const status = e.kind === "io" ? (e.meta["ok"] === true ? "ok" : "err") : String(e.meta["status"] ?? "?");
+        const stream = e.streamed ? (e.meta["truncated"] === true ? "sse!" : "sse") : "-";
+        console.log([String(e.seq), e.kind, what, status, stream, String(e.meta["durationMs"] ?? "?")].join("\t"));
+      }
+      journal.close();
+    } catch (err) {
+      fail(err);
+    }
+  });
+
+function spawnWithEnv(rawCmd: string[], env: Record<string, string>): never {
+  const cmd = rawCmd[0] === "--" ? rawCmd.slice(1) : rawCmd;
+  if (cmd.length === 0) fail(new Error("no command given — usage: rewind <record|replay> [run] -- <cmd...>"));
+  const result = spawnSync(cmd[0]!, cmd.slice(1), {
+    stdio: "inherit",
+    env: { ...process.env, ...env },
+  });
+  if (result.error) fail(result.error);
+  process.exit(result.status ?? 1);
+}
+
+program
+  .command("record")
+  .description("Run a command with recording enabled (agent must use rewind.fromEnv())")
+  .option("-j, --journal <path>", "journal database", DEFAULT_JOURNAL)
+  .argument("[cmd...]", "command to run")
+  .passThroughOptions()
+  .action((cmd: string[], opts: { journal: string }) => {
+    spawnWithEnv(cmd, { REWIND_MODE: "record", REWIND_JOURNAL: opts.journal });
+  });
+
+program
+  .command("replay")
+  .description("Re-run a command offline against a recorded run (agent must use rewind.fromEnv())")
+  .argument("<run>", "run id (prefix ok)")
+  .option("-j, --journal <path>", "journal database", DEFAULT_JOURNAL)
+  .argument("[cmd...]", "command to run")
+  .passThroughOptions()
+  .action((runPrefix: string, cmd: string[], opts: { journal: string }) => {
+    try {
+      const journal = openJournal(opts.journal);
+      const run = resolveRun(journal, runPrefix);
+      journal.close();
+      spawnWithEnv(cmd, { REWIND_MODE: "replay", REWIND_RUN: run.id, REWIND_JOURNAL: opts.journal });
+    } catch (err) {
+      fail(err);
+    }
+  });
+
+program.parse();

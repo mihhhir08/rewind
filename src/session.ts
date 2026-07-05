@@ -37,6 +37,26 @@ export interface ReplayOptions {
   run: RunId;
 }
 
+/** Session wired from the environment — the handshake used by the rewind CLI.
+ * `rewind replay <run> -- <cmd>` sets REWIND_MODE/REWIND_RUN/REWIND_JOURNAL;
+ * unwired environments fall back to a live recording session, so agent code
+ * is written once and never branches on mode. */
+export function fromEnv(defaults: { journal?: string; label?: string; base?: typeof fetch } = {}): Session {
+  const journal = process.env["REWIND_JOURNAL"] ?? defaults.journal ?? "default.rewind.db";
+  if (process.env["REWIND_MODE"] === "replay") {
+    const run = process.env["REWIND_RUN"];
+    if (run === undefined || run === "") {
+      throw new Error("[rewind] REWIND_MODE=replay requires REWIND_RUN to be set");
+    }
+    return replay({ journal, run });
+  }
+  return record({
+    journal,
+    ...(defaults.label !== undefined ? { label: defaults.label } : {}),
+    ...(defaults.base !== undefined ? { base: defaults.base } : {}),
+  });
+}
+
 export function replay(opts: ReplayOptions): Session {
   const journal = Journal.open(opts.journal);
   return {
