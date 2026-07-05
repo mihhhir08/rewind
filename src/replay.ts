@@ -38,7 +38,12 @@ export class EventCursor {
       if (q) q.push(e);
       else this.queues.set(e.fingerprint, [e]);
     }
-    // events arrive seq-ordered from the journal, so each queue is FIFO by seq
+    // Queues are FIFO by ARRIVAL order, not completion (seq) order: when
+    // identical requests raced during record, each replaying caller must get
+    // the response its position originally received, or transcripts diverge.
+    const arrivalOf = (e: JournalEvent): number =>
+      typeof e.meta["arrivalIndex"] === "number" ? (e.meta["arrivalIndex"] as number) : e.seq;
+    for (const q of this.queues.values()) q.sort((a, b) => arrivalOf(a) - arrivalOf(b));
   }
 
   next(fp: string): JournalEvent | undefined {

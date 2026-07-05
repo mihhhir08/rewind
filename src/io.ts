@@ -23,7 +23,10 @@ export class IoSerializationError extends Error {
 }
 
 export function createRecordingIo(journal: Journal, run: RunId): IoFn {
+  let arrival = 0;
   return async <T>(name: string, fn: () => T | Promise<T>): Promise<T> => {
+    const arrivalIndex = arrival;
+    arrival += 1;
     const started = performance.now();
     let result: IoResult;
     let thrown: unknown;
@@ -55,6 +58,7 @@ export function createRecordingIo(journal: Journal, run: RunId): IoFn {
       meta: {
         name,
         ok: result.ok,
+        arrivalIndex,
         durationMs: Math.round((performance.now() - started) * 1000) / 1000,
       },
     });

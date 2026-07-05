@@ -22,7 +22,13 @@ export async function requestFromFetchArgs(
 }
 
 export function createRecordingFetch(journal: Journal, run: RunId, base: typeof fetch = fetch): typeof fetch {
+  // Journal seq is completion order (events append when responses settle).
+  // arrivalIndex captures request-issue order so replay can pair racing
+  // identical requests with the responses their callers originally received.
+  let arrival = 0;
   return (async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+    const arrivalIndex = arrival;
+    arrival += 1;
     const record = await requestFromFetchArgs(input, init);
     const fp = fingerprint(record);
     const started = performance.now();
@@ -46,6 +52,7 @@ export function createRecordingFetch(journal: Journal, run: RunId, base: typeof 
           url: record.url,
           method: record.method,
           status: res.status,
+          arrivalIndex,
           durationMs: Math.round((performance.now() - started) * 1000) / 1000,
           ...(envelope.truncated ? { truncated: true } : {}),
         },

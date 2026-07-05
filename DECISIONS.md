@@ -26,6 +26,12 @@ Every architectural fork in the road, what was chosen, what was rejected, and wh
 **Rejected:** allowlisting semantic headers (`anthropic-version`, `anthropic-beta`, `content-type`) — an unknown header that *does* change API behavior would then be silently ignored and two genuinely different requests would collide on one fingerprint. Wrong-response bugs are worse than missed-match bugs: a blocklist miss causes a replay MISS (loud, debuggable); an allowlist miss causes a wrong HIT (silent corruption).
 **Consequence:** fingerprints fail loud rather than lie. Arrays are never sorted during body canonicalization — message order is semantic.
 
+## D5 — Concurrent identical requests pair by ARRIVAL order, not completion order
+
+**Chose:** the journal keeps `seq` as completion order (append-on-settle is the only honest append point), but each event also records an `arrivalIndex` captured when the request was issued. Replay hands out responses per fingerprint in arrival order.
+**Rejected:** pairing by completion (`seq`) order — when identical requests race and complete in a different order than they were issued, seq-order pairing gives caller 0 the response caller 3 received during record. Values would still be deterministic, but transcripts would diverge from the recorded run, breaking the byte-exactness guarantee for concurrent agents.
+**Consequence:** for a deterministic agent (same code, same replay inputs), request-issue order is reproducible even under concurrency, so arrival-order pairing reproduces the exact original assignment. The precise guarantee: replay reproduces recorded VALUES and their original caller-assignment; it does not reproduce wall-clock interleaving (and does not need to).
+
 ## D4 — Explicit `io()` wrapper for tools, not automatic interception
 
 **Chose:** side effects outside the LLM call (tool executions, `Date.now`, `Math.random`) are journaled via an explicit `io("name", fn)` wrapper.

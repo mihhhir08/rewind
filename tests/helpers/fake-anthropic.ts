@@ -6,9 +6,9 @@ export interface FakeRequest {
 }
 
 export type FakeReply =
-  | { status?: number; headers?: Record<string, string>; json: unknown }
-  | { status?: number; headers?: Record<string, string>; sseChunks: string[] }
-  | { status?: number; headers?: Record<string, string>; sseChunks: string[]; truncateAfterChunk: number };
+  | { status?: number; headers?: Record<string, string>; delayMs?: number; json: unknown }
+  | { status?: number; headers?: Record<string, string>; delayMs?: number; sseChunks: string[] }
+  | { status?: number; headers?: Record<string, string>; delayMs?: number; sseChunks: string[]; truncateAfterChunk: number };
 
 export interface FakeAnthropic {
   fetch: typeof fetch;
@@ -89,6 +89,7 @@ export function createFakeAnthropic(respond: (req: FakeRequest, callIndex: numbe
     requests.push(fakeReq);
 
     const reply = respond(fakeReq, callIndex);
+    if (reply.delayMs !== undefined) await new Promise((r) => setTimeout(r, reply.delayMs));
 
     if ("json" in reply) {
       return new Response(JSON.stringify(reply.json), {
