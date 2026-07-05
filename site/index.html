@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>rewind — deterministic record/replay debugging for LLM agents</title>
+<meta name="description" content="Record an agent run once; replay it byte-exact, offline, free, forever. Fork any step to compute the future that would have happened. rr for agents.">
+<meta property="og:title" content="rewind — rr for agents">
+<meta property="og:description" content="Deterministic record/replay debugging for LLM agents. Replay crashed runs offline at $0. Fork any step to compute counterfactual futures.">
+<meta property="og:type" content="website">
+<style>
+  :root {
+    --bg: #0a0c10;
+    --bg-raise: #11141b;
+    --border: #1e2430;
+    --text: #d6dbe4;
+    --dim: #8b93a3;
+    --faint: #5a6272;
+    --green: #4ade80;
+    --amber: #fbbf24;
+    --red: #f87171;
+    --cyan: #67e8f9;
+    --mono: "SF Mono", ui-monospace, "Cascadia Code", "JetBrains Mono", Menlo, Consolas, monospace;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--mono);
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--cyan); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .wrap { max-width: 940px; margin: 0 auto; padding: 0 24px; }
+
+  /* nav */
+  nav {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 20px 0;
+  }
+  nav .logo { font-weight: 700; font-size: 18px; color: var(--text); }
+  nav .logo span { color: var(--green); }
+  nav .links a { color: var(--dim); margin-left: 24px; font-size: 14px; }
+  nav .links a:hover { color: var(--text); text-decoration: none; }
+
+  /* hero */
+  header { padding: 72px 0 40px; }
+  .kicker {
+    color: var(--green); font-size: 13px; letter-spacing: 2px;
+    text-transform: uppercase; margin-bottom: 16px;
+  }
+  h1 {
+    font-size: clamp(28px, 5vw, 44px); line-height: 1.2; font-weight: 700;
+    max-width: 760px;
+  }
+  h1 em { font-style: normal; color: var(--green); }
+  .sub {
+    color: var(--dim); font-size: clamp(15px, 2.2vw, 18px);
+    margin-top: 18px; max-width: 680px;
+  }
+  .sub strong { color: var(--text); font-weight: 600; }
+  .cta { margin-top: 32px; display: flex; gap: 14px; flex-wrap: wrap; }
+  .btn {
+    display: inline-block; padding: 11px 22px; border-radius: 6px;
+    font-size: 14px; font-weight: 600; border: 1px solid var(--border);
+    transition: all .15s ease;
+  }
+  .btn-primary { background: var(--green); color: #06110a; border-color: var(--green); }
+  .btn-primary:hover { filter: brightness(1.1); text-decoration: none; }
+  .btn-ghost { color: var(--text); background: var(--bg-raise); }
+  .btn-ghost:hover { border-color: var(--faint); text-decoration: none; }
+
+  /* terminal */
+  .term {
+    margin: 56px 0 0; background: #0d1017; border: 1px solid var(--border);
+    border-radius: 10px; overflow: hidden;
+    box-shadow: 0 24px 60px -24px rgba(0,0,0,.7);
+  }
+  .term-bar {
+    display: flex; align-items: center; gap: 8px;
+    padding: 12px 16px; background: var(--bg-raise);
+    border-bottom: 1px solid var(--border);
+  }
+  .dot { width: 12px; height: 12px; border-radius: 50%; }
+  .dot:nth-child(1) { background: #ff5f57; }
+  .dot:nth-child(2) { background: #febc2e; }
+  .dot:nth-child(3) { background: #28c840; }
+  .term-title { margin-left: 8px; color: var(--faint); font-size: 12px; }
+  .term-body {
+    padding: 20px; font-size: 13.5px; line-height: 1.75;
+    min-height: 420px; white-space: pre-wrap; word-break: break-word;
+  }
+  .term-body .p { color: var(--cyan); }
+  .term-body .c { color: var(--faint); }
+  .term-body .ok { color: var(--green); }
+  .term-body .err { color: var(--red); }
+  .term-body .warn { color: var(--amber); }
+  .term-body .dim { color: var(--dim); }
+  .cursor {
+    display: inline-block; width: 8px; height: 16px;
+    background: var(--green); vertical-align: text-bottom;
+    animation: blink 1s steps(1) infinite;
+  }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  /* sections */
+  section { padding: 72px 0 0; }
+  h2 {
+    font-size: 24px; margin-bottom: 8px;
+  }
+  h2::before { content: "# "; color: var(--faint); }
+  .lede { color: var(--dim); margin-bottom: 32px; max-width: 680px; }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }
+  .card {
+    background: var(--bg-raise); border: 1px solid var(--border);
+    border-radius: 8px; padding: 22px;
+  }
+  .card h3 { font-size: 15px; margin-bottom: 10px; color: var(--green); }
+  .card p { font-size: 13.5px; color: var(--dim); }
+  .card p code { color: var(--text); }
+
+  pre.code {
+    background: #0d1017; border: 1px solid var(--border); border-radius: 8px;
+    padding: 20px; font-size: 13.5px; overflow-x: auto; line-height: 1.7;
+  }
+  pre.code .c { color: var(--faint); }
+  pre.code .k { color: var(--cyan); }
+  pre.code .s { color: var(--green); }
+  code { font-family: var(--mono); }
+  p code, li code {
+    background: var(--bg-raise); border: 1px solid var(--border);
+    padding: 1px 6px; border-radius: 4px; font-size: .92em;
+  }
+
+  .guarantee {
+    border-left: 3px solid var(--green); background: var(--bg-raise);
+    padding: 20px 24px; border-radius: 0 8px 8px 0; margin-top: 8px;
+  }
+  .guarantee p { color: var(--dim); font-size: 14px; }
+  .guarantee strong { color: var(--text); }
+
+  .cmds { list-style: none; margin-top: 8px; }
+  .cmds li {
+    display: flex; gap: 18px; padding: 12px 0;
+    border-bottom: 1px solid var(--border); font-size: 14px;
+    flex-wrap: wrap;
+  }
+  .cmds li:last-child { border-bottom: none; }
+  .cmds code { min-width: 260px; color: var(--green); background: none; border: none; padding: 0; }
+  .cmds span { color: var(--dim); flex: 1; min-width: 240px; }
+
+  footer {
+    margin-top: 96px; padding: 32px 0 48px;
+    border-top: 1px solid var(--border);
+    display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px;
+    color: var(--faint); font-size: 13px;
+  }
+  footer a { color: var(--dim); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<nav>
+  <div class="logo"><span>▶▶</span> rewind</div>
+  <div class="links">
+    <a href="#demo">demo</a>
+    <a href="#how">how</a>
+    <a href="#start">quick start</a>
+    <a href="https://github.com/mihhhir08/rewind">github</a>
+  </div>
+</nav>
+
+<header>
+  <div class="kicker">rr for agents</div>
+  <h1>Your agent crashed on step 47 of 50.<br>Run it again — <em>offline, byte-exact, $0.</em></h1>
+  <p class="sub">
+    <strong>rewind</strong> is a deterministic record/replay debugger for LLM agents.
+    Record a run once; replay it forever without a network or an API key.
+    Fork any step to compute the future that <strong>would have</strong> happened.
+  </p>
+  <div class="cta">
+    <a class="btn btn-primary" href="https://github.com/mihhhir08/rewind">View on GitHub →</a>
+    <a class="btn btn-ghost" href="#demo">Watch the demo</a>
+  </div>
+</header>
+
+<section id="demo">
+  <div class="term">
+    <div class="term-bar">
+      <div class="dot"></div><div class="dot"></div><div class="dot"></div>
+      <div class="term-title">rewind — demo/agent.ts</div>
+    </div>
+    <div class="term-body" id="term"></div>
+  </div>
+</section>
+
+<section id="why">
+  <h2>The problem</h2>
+  <p class="lede">
+    Reproducing an agent failure today means re-running every step, paying for every token,
+    and hoping the model takes the same path. It won't. Observability tools show you what
+    happened — rewind lets you <strong style="color:var(--text)">run it again</strong>.
+  </p>
+  <div class="grid">
+    <div class="card">
+      <h3>Replay, don't re-run</h3>
+      <p>Recorded responses are served straight from a local SQLite journal — including exact
+      SSE chunk boundaries. The real SDK consumes replayed streams without knowing the difference.
+      No network. No key. No cost.</p>
+    </div>
+    <div class="card">
+      <h3>Fork the timeline</h3>
+      <p><em style="color:var(--text);font-style:normal">What if the model had said something else?</em>
+      Rewrite any recorded response and replay the edit. Hybrid replay serves history from the
+      journal and goes live only past the divergence — once.</p>
+    </div>
+    <div class="card">
+      <h3>Diff two futures</h3>
+      <p><code>rewind diff</code> compares runs event-by-event and pinpoints the first divergence —
+      including the subtle case of <em style="font-style:normal">same request, different response</em>.</p>
+    </div>
+    <div class="card">
+      <h3>Closed under replay</h3>
+      <p>Every run in the journal — original or forked — replays fully offline. Hybrid replay
+      journals everything into a new run, so counterfactuals are as replayable as the original.</p>
+    </div>
+  </div>
+</section>
+
+<section id="how">
+  <h2>Why this is hard</h2>
+  <div class="grid">
+    <div class="card">
+      <h3>"Same request" has no obvious definition</h3>
+      <p>Bodies serialize with unstable key order; headers carry per-attempt noise. rewind
+      canonicalizes and fingerprints requests with a volatile-header blocklist — chosen so a
+      wrong fingerprint fails <em style="font-style:normal">loud</em> (replay miss) instead of
+      lying (silent corruption).</p>
+    </div>
+    <div class="card">
+      <h3>Concurrency breaks naive matching</h3>
+      <p>When identical requests race, journal order is completion order — but each caller needs
+      <em style="font-style:normal">their</em> response back. rewind records arrival order
+      separately and pairs by it, keeping transcripts byte-exact under races.</p>
+    </div>
+    <div class="card">
+      <h3>Streams are not bodies</h3>
+      <p>SDK parsers are sensitive to SSE framing, so rewind records and replays the exact chunk
+      boundaries — and re-frames edited responses into valid SSE so the SDK can still parse a
+      forked stream.</p>
+    </div>
+    <div class="card">
+      <h3>No proxy, no monkey-patching</h3>
+      <p>rewind injects a recording <code>fetch</code> at the SDK transport boundary. No MITM
+      certificates, no global patches, no traffic outside your process.</p>
+    </div>
+  </div>
+</section>
+
+<section id="start">
+  <h2>Quick start</h2>
+  <p class="lede">The whole integration is two lines.</p>
+<pre class="code"><span class="k">import</span> Anthropic <span class="k">from</span> <span class="s">"@anthropic-ai/sdk"</span>;
+<span class="k">import</span> { fromEnv } <span class="k">from</span> <span class="s">"rewind"</span>;
+
+<span class="k">const</span> session = fromEnv();
+<span class="k">const</span> client = <span class="k">new</span> Anthropic({ fetch: session.fetch });
+
+<span class="c">// wrap other non-determinism (tools, time, randomness):</span>
+<span class="k">const</span> rate = <span class="k">await</span> session.io(<span class="s">"fx_rate"</span>, fetchRate);</pre>
+
+  <p class="lede" style="margin-top:32px">Then drive everything from the CLI:</p>
+  <ul class="cmds">
+    <li><code>rewind record -- node agent.js</code><span>run live, journal every LLM call, tool result, and io</span></li>
+    <li><code>rewind replay &lt;run&gt; -- node agent.js</code><span>re-run offline: recorded responses, no key needed</span></li>
+    <li><code>rewind fork &lt;run&gt; --at 46 --text …</code><span>rewrite step 46, compute the alternate future</span></li>
+    <li><code>rewind diff &lt;run&gt; &lt;fork&gt;</code><span>see exactly where and how the futures diverge</span></li>
+    <li><code>rewind step &lt;run&gt;</code><span>walk the timeline interactively, event by event</span></li>
+  </ul>
+</section>
+
+<section>
+  <h2>The guarantee, stated precisely</h2>
+  <div class="guarantee">
+    <p>Replay is deterministic <strong>at the SDK I/O boundary</strong>. If your agent's only
+    non-determinism flows through the wrapped client and <code>io()</code>, replay reproduces
+    recorded values byte-exact — including which racing caller got which response. rewind does
+    not (and does not claim to) control instruction-level or OS-level non-determinism.</p>
+  </div>
+</section>
+
+<footer>
+  <div>Built by <a href="https://github.com/mihhhir08">Mihirsinh Chavda</a> · MIT License</div>
+  <div><a href="https://github.com/mihhhir08/rewind">github.com/mihhhir08/rewind</a></div>
+</footer>
+
+</div>
+
+<script>
+(function () {
+  var lines = [
+    { t: "$ rewind record -- npx tsx demo/agent.ts", cls: "p", d: 900 },
+    { t: "[rewind] recording run 3f2a91c4", cls: "dim", d: 500 },
+    { t: "  auditing 5 expenses…  (3 paid LLM calls)", cls: "dim", d: 1100 },
+    { t: "TypeError: Cannot read properties of undefined (reading 'toFixed')", cls: "err", d: 300 },
+    { t: "    at runAudit (demo/agent.ts:78)   ← crashes at the LAST step", cls: "err", d: 1400 },
+    { t: "", cls: "", d: 100 },
+    { t: "$ rewind replay 3f2a91c4 -- npx tsx demo/agent.ts", cls: "p", d: 900 },
+    { t: "TypeError: Cannot read properties of undefined (reading 'toFixed')", cls: "err", d: 300 },
+    { t: "  same crash · fully offline · no API key · $0.00", cls: "warn", d: 1400 },
+    { t: "", cls: "", d: 100 },
+    { t: "$ vim demo/agent.ts   # fix the one-line bug", cls: "p", d: 900 },
+    { t: "$ rewind replay 3f2a91c4 -- npx tsx demo/agent.ts", cls: "p", d: 900 },
+    { t: "✓ audit complete — total $5522.61, flagged: e4, e5", cls: "ok", d: 500 },
+    { t: "  fix verified offline · $0.00", cls: "ok", d: 1500 },
+    { t: "", cls: "", d: 100 },
+    { t: "$ rewind fork 3f2a91c4 --at 4 --text '{\"total_usd\": 0, \"flagged\": []}'", cls: "p", d: 900 },
+    { t: "forked 3f2a91c4@4 → 9be07d12   # what if the model had said $0?", cls: "dim", d: 800 },
+    { t: "$ rewind diff 3f2a91c4 9be07d12", cls: "p", d: 800 },
+    { t: "first divergence at seq 4 — changed (same request, different response)", cls: "ok", d: 2600 }
+  ];
+
+  var el = document.getElementById("term");
+  var cursor = document.createElement("span");
+  cursor.className = "cursor";
+
+  function typeLine(i) {
+    if (i >= lines.length) {
+      setTimeout(function () { el.textContent = ""; el.appendChild(cursor); typeLine(0); }, 3500);
+      return;
+    }
+    var line = lines[i];
+    var span = document.createElement("span");
+    if (line.cls) span.className = line.cls;
+    el.insertBefore(span, cursor);
+    var isCmd = line.t.charAt(0) === "$";
+    var j = 0;
+    function tick() {
+      if (j <= line.t.length) {
+        span.textContent = line.t.slice(0, j);
+        j += isCmd ? 1 : 4;
+        setTimeout(tick, isCmd ? 18 : 8);
+      } else {
+        span.textContent = line.t;
+        el.insertBefore(document.createTextNode("\n"), cursor);
+        setTimeout(function () { typeLine(i + 1); }, line.d);
+      }
+    }
+    tick();
+  }
+
+  el.appendChild(cursor);
+  var started = false;
+  function start() {
+    if (started) return;
+    started = true;
+    typeLine(0);
+  }
+  if ("IntersectionObserver" in window) {
+    new IntersectionObserver(function (entries, obs) {
+      if (entries[0].isIntersecting) { start(); obs.disconnect(); }
+    }, { threshold: 0.25 }).observe(el);
+  } else {
+    start();
+  }
+})();
+</script>
+</body>
+</html>
