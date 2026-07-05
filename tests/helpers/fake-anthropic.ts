@@ -99,14 +99,21 @@ export function createFakeAnthropic(respond: (req: FakeRequest, callIndex: numbe
 
     const chunks = reply.sseChunks.map((c) => new TextEncoder().encode(c));
     const truncateAfter = "truncateAfterChunk" in reply ? reply.truncateAfterChunk : null;
+    // Deliver via pull: erroring a stream discards its queue, so chunks must
+    // be handed out one read at a time before the truncation error fires.
+    let next = 0;
     const stream = new ReadableStream<Uint8Array>({
-      start(controller) {
-        for (let i = 0; i < chunks.length; i++) {
-          if (truncateAfter !== null && i > truncateAfter) break;
-          controller.enqueue(chunks[i]!);
+      pull(controller) {
+        if (truncateAfter !== null && next > truncateAfter) {
+          controller.error(new Error("connection reset (fake)"));
+          return;
         }
-        if (truncateAfter !== null) controller.error(new Error("connection reset (fake)"));
-        else controller.close();
+        if (next >= chunks.length) {
+          controller.close();
+          return;
+        }
+        controller.enqueue(chunks[next]!);
+        next += 1;
       },
     });
     return new Response(stream, {
