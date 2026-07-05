@@ -131,6 +131,16 @@
   }
   footer a:hover { color: #fff; }
   footer .social { display: flex; gap: 20px; }
+
+  @media (max-width: 640px) {
+    header { padding: 64px 0 40px; }
+    .term-body, pre.code {
+      white-space: pre-wrap; word-break: break-word;
+      font-size: 12px; line-height: 1.7; padding: 14px;
+    }
+    .term-bar span { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .stats, .term, .grid { margin-bottom: 48px; }
+  }
 </style>
 <script defer src="/_vercel/insights/script.js"></script>
 </head>
