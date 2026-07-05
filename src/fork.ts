@@ -55,6 +55,27 @@ export function forkRun(journal: Journal, opts: ForkOptions): RunId {
   return forkId;
 }
 
+/** Rewrite just the assistant text inside a recorded (non-streamed) Anthropic
+ * message, keeping ids, usage, stop_reason and the rest of the shape intact —
+ * the ergonomic path for "what if the model had said X". */
+export function editResponseText(event: JournalEvent, newText: string): Uint8Array {
+  const envelope = decodeResponseEnvelope(event.response);
+  if (envelope.streamed) {
+    throw new Error(
+      "[rewind] editResponseText only supports non-streamed responses — for streamed events, pass full SSE text to editResponseBody",
+    );
+  }
+  const message = JSON.parse(new TextDecoder().decode(envelope.body)) as {
+    content?: Array<{ type: string; text?: string }>;
+  };
+  const textBlock = message.content?.find((b) => b.type === "text");
+  if (textBlock === undefined) {
+    throw new Error("[rewind] recorded response has no text content block to edit");
+  }
+  textBlock.text = newText;
+  return editResponseBody(event, JSON.stringify(message));
+}
+
 /** Rewrite an llm_call event's response body, preserving status and headers.
  * Streamed responses are re-framed: the new SSE text is split back into
  * chunks on event boundaries ("\n\n") so SDK stream parsers can still

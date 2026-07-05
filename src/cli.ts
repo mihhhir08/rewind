@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { Command } from "commander";
 import { diffRuns, eventWhat } from "./diff.js";
-import { editResponseBody, forkRun } from "./fork.js";
+import { editResponseBody, editResponseText, forkRun } from "./fork.js";
 import { Journal, type RunSummary } from "./journal.js";
 
 const program = new Command();
@@ -118,21 +118,24 @@ program
   .description("Fork a run at an event, rewriting the recorded response (\"what if the model had said…\")")
   .argument("<run>", "run id (prefix ok)")
   .requiredOption("--at <seq>", "seq of the event to rewrite")
-  .option("--response <text>", "replacement response body (SSE text for streamed events)")
-  .option("--response-file <path>", "read the replacement body from a file")
+  .option("--text <text>", "replace just the assistant text of the recorded message (non-streamed)")
+  .option("--response <text>", "replacement raw response body (SSE text for streamed events)")
+  .option("--response-file <path>", "read the replacement raw body from a file")
   .option("--label <label>", "label for the forked run")
   .option("-j, --journal <path>", "journal database", DEFAULT_JOURNAL)
-  .action((runPrefix: string, opts: { at: string; response?: string; responseFile?: string; label?: string; journal: string }) => {
+  .action((runPrefix: string, opts: { at: string; text?: string; response?: string; responseFile?: string; label?: string; journal: string }) => {
     try {
       const body = opts.responseFile !== undefined ? readFileSync(opts.responseFile, "utf8") : opts.response;
-      if (body === undefined) throw new Error("provide --response <text> or --response-file <path>");
+      if (body === undefined && opts.text === undefined) {
+        throw new Error("provide --text <text>, --response <text>, or --response-file <path>");
+      }
       const journal = openJournal(opts.journal);
       const run = resolveRun(journal, runPrefix);
       const forkId = forkRun(journal, {
         from: run.id,
         atSeq: Number(opts.at),
         ...(opts.label !== undefined ? { label: opts.label } : {}),
-        edit: (event) => editResponseBody(event, body),
+        edit: (event) => (body !== undefined ? editResponseBody(event, body) : editResponseText(event, opts.text!)),
       });
       journal.close();
       console.log(`forked ${run.id.slice(0, 8)}@${opts.at} → ${forkId.slice(0, 8)} (${forkId})`);

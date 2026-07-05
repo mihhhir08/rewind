@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { editResponseBody, forkRun } from "../src/fork.js";
+import { editResponseBody, editResponseText, forkRun } from "../src/fork.js";
 import { Journal } from "../src/journal.js";
 import { fromEnv, record, replay } from "../src/session.js";
 import { createFakeAnthropic, messageJson, sseChunksForText } from "./helpers/fake-anthropic.js";
@@ -189,6 +189,43 @@ describe("forkRun", () => {
     expect(body).toBe(newSse);
     expect(body).toContain("edited streamed".slice(0, 5));
     strict.finish();
+  });
+
+  it("editResponseText rewrites just the assistant text inside a recorded message", async () => {
+    const fake = createFakeAnthropic(() => ({ json: messageJson("original answer") }));
+    const rec = record({ journal: path, base: fake.fetch });
+    await (await rec.fetch(URL_, post({ turn: 0 }))).text();
+    rec.finish();
+
+    const journal = Journal.open(path);
+    const forkId = forkRun(journal, {
+      from: rec.runId,
+      atSeq: 0,
+      edit: (e) => editResponseText(e, "what-if answer"),
+    });
+    journal.close();
+
+    const strict = replay({ journal: path, run: forkId });
+    const body = (await (await strict.fetch(URL_, post({ turn: 0 }))).json()) as {
+      id: string;
+      content: Array<{ type: string; text: string }>;
+    };
+    strict.finish();
+    expect(body.content[0]!.text).toBe("what-if answer");
+    expect(body.id).toBeDefined(); // rest of the message shape survives intact
+  });
+
+  it("editResponseText refuses streamed events (use editResponseBody with SSE text)", async () => {
+    const fake = createFakeAnthropic(() => ({ sseChunks: sseChunksForText("streamed") }));
+    const rec = record({ journal: path, base: fake.fetch });
+    await (await rec.fetch(URL_, post({ stream: true }))).text();
+    rec.finish();
+
+    const journal = Journal.open(path);
+    expect(() =>
+      forkRun(journal, { from: rec.runId, atSeq: 0, edit: (e) => editResponseText(e, "nope") }),
+    ).toThrow(/streamed/);
+    journal.close();
   });
 
   it("fromEnv honors REWIND_POLICY=hybrid, re-recording into a child run", async () => {
